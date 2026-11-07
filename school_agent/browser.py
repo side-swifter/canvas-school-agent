@@ -43,20 +43,29 @@ class PlaywrightDriver:
         self.storage_state, self.allowed, self.headless = storage_state, set(allowed_hosts), headless
         self._pw = self._browser = self._ctx = None
 
-    def __enter__(self):
-        from playwright.sync_api import sync_playwright  # optional dependency
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
-        self._ctx = self._browser.new_context(storage_state=self.storage_state)
+    def open(self):
+        """Idempotent: one browser per scan, reused for every fallback fetch."""
+        if self._ctx is None:
+            from playwright.sync_api import sync_playwright  # optional dependency
+            self._pw = sync_playwright().start()
+            self._browser = self._pw.chromium.launch(headless=self.headless)
+            self._ctx = self._browser.new_context(storage_state=self.storage_state)
         return self
 
-    def __exit__(self, *exc):
+    def close(self):
         for obj in (self._ctx, self._browser):
             try:
                 obj and obj.close()
             except Exception:
                 pass
         self._pw and self._pw.stop()
+        self._pw = self._browser = self._ctx = None
+
+    def __enter__(self):
+        return self.open()
+
+    def __exit__(self, *exc):
+        self.close()
 
     def _check(self, url):
         if urlparse(url).hostname not in self.allowed:

@@ -3,11 +3,37 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 import os
+import socket
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 DEFAULT_SECRETS_DIR = Path.home() / '.config' / 'school-agent'
 LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1'}
+
+
+def is_local_address(host):
+    """True for loopback or any address assigned to THIS machine (e.g. its Tailscale IP). Remote hosts are never local."""
+    if not host:
+        return False
+    if host in LOCAL_HOSTS:
+        return True
+    try:
+        target = {ai[4][0] for ai in socket.getaddrinfo(host, None)}
+        mine = {ai[4][0] for ai in socket.getaddrinfo(socket.gethostname(), None)}
+        for ip in target:
+            if ip.startswith('127.') or ip == '::1':
+                return True
+            probe = socket.socket(socket.AF_INET6 if ':' in ip else socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                probe.bind((ip, 0))        # binding only succeeds for an address owned by this host
+                return True
+            except OSError:
+                pass
+            finally:
+                probe.close()
+        return bool(target & mine)
+    except OSError:
+        return False
 
 
 def _bool(value, default=False):
@@ -26,6 +52,10 @@ class Config:
     ai_api_key: str = ''
     ai_model: str = ''
     ai_provider: str = 'openai'         # openai (any OpenAI-compatible endpoint) | anthropic
+    ai_num_ctx: int = 4096
+    ai_max_chars: int = 8000            # per-source cap after date-window selection
+    ai_prefilter: bool = True           # skip sources with no date-like text (no model call)
+    ocr_enabled: bool = True            # local OCR of image-only PDFs/images when the `ocr` extra is installed
     ai_data_approved: bool = False      # explicit approval to send school text to a NON-local provider
     dry_run: bool = True
     todoist_api_token: str = ''
@@ -45,12 +75,13 @@ class Config:
 
     @property
     def ai_is_local(self):
-        return urlparse(self.ai_base_url).hostname in LOCAL_HOSTS
+        host = urlparse(self.ai_base_url or ('http://127.0.0.1:11434' if self.ai_provider == 'ollama' else '')).hostname
+        return is_local_address(host)
 
     @property
     def ai_allowed(self):
         """Documents may only be sent to a configured provider that is local or explicitly approved."""
-        has_endpoint = bool(self.ai_base_url) or self.ai_provider == 'anthropic'
+        has_endpoint = bool(self.ai_base_url) or self.ai_provider in ('anthropic', 'ollama')
         return bool(has_endpoint and self.ai_model and (self.ai_is_local or self.ai_data_approved))
 
     @classmethod
@@ -69,7 +100,8 @@ class Config:
             canvas_base_url=get('CANVAS_BASE_URL').rstrip('/'), canvas_token=get('CANVAS_TOKEN'),
             canvas_browser_state=get('CANVAS_BROWSER_STATE'), browser_export_json=get('BROWSER_EXPORT_JSON'),
             ai_base_url=get('AI_BASE_URL').rstrip('/'), ai_api_key=get('AI_API_KEY'), ai_model=get('AI_MODEL'),
-            ai_provider=get('AI_PROVIDER', 'openai').lower(), ai_data_approved=_bool(get('AI_DATA_APPROVED')),
+            ai_provider=get('AI_PROVIDER', 'openai').lower(), ai_num_ctx=int(get('AI_NUM_CTX', '4096')),
+            ai_max_chars=int(get('AI_MAX_CHARS', '8000')), ai_prefilter=_bool(get('AI_PREFILTER'), True), ocr_enabled=_bool(get('OCR_ENABLED'), True), ai_data_approved=_bool(get('AI_DATA_APPROVED')),
             dry_run=get('DRY_RUN', 'true').lower() != 'false',
             todoist_api_token=get('TODOIST_API_TOKEN'), todoist_project_id=get('TODOIST_PROJECT_ID'),
             todoist_dedupe_all_projects=_bool(get('TODOIST_DEDUPE_ALL_PROJECTS'), True),

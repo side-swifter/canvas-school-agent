@@ -87,18 +87,23 @@ def extract_document(content, filename):
     if name.endswith(('.txt', '.csv', '.md', '.html', '.htm')):
         value = content.decode('utf-8', errors='replace')
         return strip_html(value) if name.endswith(('.html', '.htm')) else value
+    if name.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')):
+        raise NeedsOCR(filename)
     return ''
 
 
-SUPPORTED_EXT = ('.pdf', '.docx', '.txt', '.csv', '.md', '.html', '.htm')
-GOOGLE_DOC_RE = re.compile(r'https://docs\.google\.com/(document|spreadsheets|presentation)/d/(?!e/)([\w-]{15,})')
+SUPPORTED_EXT = ('.pdf', '.docx', '.txt', '.csv', '.md', '.html', '.htm', '.png', '.jpg', '.jpeg')
+GOOGLE_DOC_RE = re.compile(r'https://docs\.google\.com/(document|spreadsheets|presentation)/d/(e/)?([\w-]{15,})')
 
 
 def google_export_url(url):
-    """Public-link export URL for a Google Doc/Sheet/Slides, or None."""
+    """(fetch_url, doc_id, filename) for a Google Doc/Sheet/Slides link, or None.
+    /d/e/ links are 'published to web' pages (HTML); normal links use the export endpoint (needs link-sharing or a logged-in session)."""
     m = GOOGLE_DOC_RE.match(url)
     if not m:
         return None
-    kind, doc_id = m.groups()
+    kind, published, doc_id = m.groups()
+    if published:
+        return f'https://docs.google.com/{kind}/d/e/{doc_id}/pub', doc_id, 'linked.html'
     fmt = {'document': 'txt', 'spreadsheets': 'csv', 'presentation': 'txt'}[kind]
-    return f'https://docs.google.com/{kind}/d/{doc_id}/export?format={fmt}', doc_id
+    return f'https://docs.google.com/{kind}/d/{doc_id}/export?format={fmt}', doc_id, 'linked.txt'

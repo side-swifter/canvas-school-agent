@@ -105,7 +105,8 @@ def collect(cfg, deps):
     # Browser: full crawl if the API is unusable, otherwise only for what the API refused (403/404).
     if deps.collector:
         try:
-            with deps.driver:
+            if True:
+                deps.driver.open()
                 if not api_ok:
                     for course in deps.collector.courses():
                         out.materials.extend(deps.collector.materials(course))
@@ -131,6 +132,21 @@ def collect(cfg, deps):
     return out
 
 
+def try_ocr(raw, filename, cfg):
+    """Local OCR only when enabled and installed; '' means not possible / nothing legible."""
+    if not cfg.ocr_enabled:
+        return ''
+    from . import ocr
+    if not ocr.available():
+        return ''
+    try:
+        text = ocr.ocr_image(raw) if filename.lower().endswith(ocr.IMAGE_EXT) else ocr.ocr_pdf(raw)
+    except Exception as exc:
+        log.warning('OCR failed for %s: %s', filename, exc)
+        return ''
+    return text if len(text.strip()) >= 20 else ''
+
+
 def enrich(m, cfg, deps, store, now):
     """Fill m['text']. Returns (material, issue) where issue is a short string for unreadable documents."""
     m = dict(m)
@@ -146,8 +162,8 @@ def enrich(m, cfg, deps, store, now):
                 return m, 'too_large'
             raise
         if raw is None and deps.driver and m.get('browser_url'):
-            with deps.driver:
-                raw = deps.driver.download(m['browser_url']).body
+            deps.driver.open()
+            raw = deps.driver.download(m['browser_url']).body
         if raw is None:
             return m, 'inaccessible'
         if m['type'] == 'gdoc':
@@ -159,7 +175,10 @@ def enrich(m, cfg, deps, store, now):
             try:
                 m['text'] = extract_document(raw, m.get('filename') or m['title'])
             except NeedsOCR:
-                return m, 'needs_ocr'
+                text = try_ocr(raw, m.get('filename') or m['title'], cfg)
+                if not text:
+                    return m, 'needs_ocr'
+                m['text'], m['ocr'] = text, True
             except ValueError as exc:
                 if 'too large' in str(exc):
                     return m, 'too_large'
@@ -184,10 +203,19 @@ def scan(cfg, deps=None, force=False):
                       'DRY_RUN=false but live writes have not been approved (run `school-agent approve-live`).', 'error')
         return 2
     run_id = store.start_run(now_iso)
+    unreadable_keys = set()
     rep = {'started': now_iso, 'mode': 'dry-run' if cfg.dry_run else 'LIVE', 'sources': {}, 'extracted': 0, 'ai_pending': 0,
            'actions': [], 'new_reviews': [], 'errors': [], 'unreadable': []}
 
     # 1. collect
+    try:
+        return _scan(cfg, deps, force, store, alerter, now, now_iso, today, run_id, rep, unreadable_keys)
+    finally:
+        if deps.driver and hasattr(deps.driver, 'close'):
+            deps.driver.close()
+
+
+def _scan(cfg, deps, force, store, alerter, now, now_iso, today, run_id, rep, unreadable_keys):
     got = collect(cfg, deps)
     rep['errors'].extend(got.errors)
     seen = set()
@@ -196,6 +224,7 @@ def scan(cfg, deps=None, force=False):
             m, issue = enrich(original, cfg, deps, store, now_iso)
             if issue:
                 rep['unreadable'].append({'source': m['key'], 'title': m['title'], 'issue': issue, 'url': m['url']})
+                unreadable_keys.add(f"unreadable:{m['key']}:{issue}")
                 if store.add_review(f"unreadable:{m['key']}:{issue}", 'unreadable_document',
                                     {'source': m['key'], 'title': m['title'], 'url': m['url'], 'issue': issue,
                                      'reason': {'needs_ocr': 'image-only PDF; OCR not run automatically', 'inaccessible': 'API and browser could not open it',
@@ -238,6 +267,8 @@ def scan(cfg, deps=None, force=False):
             log.exception('Source processing failed: %s', original.get('key'))
             rep['errors'].append({'stage': 'process', 'source': original.get('key'), 'error': str(exc)})
 
+    if got.complete:
+        store.close_reviews_where_obsolete('unreadable_document', unreadable_keys, now_iso)
     for key in seen:
         store.touch_source(key, run_id)
     # review-approved manual items behave like trusted observations
@@ -332,7 +363,9 @@ def sync(cfg, deps, rep, store, now_iso):
         if not target:
             continue
         if ob['date'] < today_iso and not (ob['todoist_id'] or ob['calendar_id']):
-            continue        # never create NEW entries for dates already past
+            continue        # never create NEW entries for dates already past (kept in state for reconciliation)
+        if ob['status'] == 'completed':
+            continue        # already submitted/graded in Canvas: no task needed
         client = deps.gcal if target == 'calendar' else deps.todoist
         entry = {'oid': ob['oid'], 'target': target, 'course': ob['course'], 'title': ob['title'], 'date': ob['date'],
                  'status': ob['status'], 'sources': ob['urls']}
@@ -414,6 +447,27 @@ def auth_google(cfg):
     return 0
 
 
+def browser_check(cfg):
+    """Is the saved browser session still valid? Opens Canvas /courses only; prints no page content."""
+    state = cfg.canvas_browser_state
+    if not (state and Path(state).exists()):
+        print('No browser session configured. Run scripts/capture_session.py on your computer, copy the file here, set CANVAS_BROWSER_STATE.')
+        return 1
+    from urllib.parse import urlparse
+    drv = PlaywrightDriver(state, {urlparse(cfg.canvas_base_url).hostname, *cfg.extra_document_hosts})
+    try:
+        with drv:
+            res = drv.goto(cfg.canvas_base_url + '/courses')
+        print(f'Session OK: reached Canvas courses page ({len(res.links)} links).')
+        return 0
+    except SessionExpired as exc:
+        print('Session EXPIRED or not logged in. Re-run scripts/capture_session.py.')
+        return 1
+    except ImportError:
+        print('Playwright not installed: pip install -e ".[browser]" && playwright install chromium')
+        return 1
+
+
 def write_env(path, updates):
     """Update KEY=VALUE lines in place (other lines kept), atomically, mode 600, directory mode 700."""
     import os
@@ -462,12 +516,14 @@ def main(argv=None):
     rv.add_argument('action', choices=['list', 'show', 'approve', 'reject']); rv.add_argument('id', nargs='?', type=int)
     rv.add_argument('--date')
     sc2 = sub.add_parser('setup-canvas'); sc2.add_argument('--base-url', default='https://wcpss.instructure.com')
-    sub.add_parser('auth-google'); sub.add_parser('approve-live'); sub.add_parser('status')
+    sub.add_parser('auth-google'); sub.add_parser('browser-check'); sub.add_parser('approve-live'); sub.add_parser('status')
     args = parser.parse_args(argv)
     cfg = Config.from_env()
     cmd = args.command or 'scan'
     if cmd == 'review':
         return review_cli(cfg, args)
+    if cmd == 'browser-check':
+        return browser_check(cfg)
     if cmd == 'setup-canvas':
         return setup_canvas(cfg, args.base_url)
     if cmd == 'auth-google':

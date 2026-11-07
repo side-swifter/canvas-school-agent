@@ -15,6 +15,12 @@ TEST_WORDS = re.compile(r'\b(exam|test|midterm|final|unit test)\b', re.I)
 FILE_LINK = re.compile(r'/courses/(\d+)/files/(\d+)')
 
 
+def _done(assignment):
+    """Already submitted/graded by the student -> no task needed."""
+    sub = assignment.get('submission') or {}
+    return sub.get('workflow_state') in ('submitted', 'graded', 'pending_review') or bool(sub.get('excused'))
+
+
 class CanvasAuthError(Exception):
     pass
 
@@ -90,11 +96,11 @@ class CanvasClient:
         m.update(extra)
         return m
 
-    def _structured(self, kind, title, iso, evidence_label):
+    def _structured(self, kind, title, iso, evidence_label, done=False):
         date, time = local_due(iso, self.tz)
         if not date:
             return []
-        return [{'kind': kind, 'title': title, 'date': date, 'time': time, 'status': 'scheduled', 'confidence': 1.0,
+        return [{'kind': kind, 'title': title, 'date': date, 'time': time, 'status': 'completed' if done else 'scheduled', 'confidence': 1.0,
                  'evidence': f'Canvas {evidence_label}: {iso}'}]
 
     def _linked(self, cid, course, html, origin_url):
@@ -109,9 +115,9 @@ class CanvasClient:
                 continue
             g = google_export_url(link)
             if g:
-                url, doc_id = g
-                yield self._mat(cid, course, 'gdoc', doc_id, f'Linked Google doc {doc_id}', '', link,
-                                download_url=url, filename='linked.txt', linked_from=origin_url, external=True)
+                url, doc_id, fname = g
+                yield self._mat(cid, course, 'gdoc', doc_id, f'Linked Google doc {doc_id}', '', link, download_url=url,
+                                browser_url=url, filename=fname, linked_from=origin_url, external=True)
 
     def _file_material(self, cid, course, f):
         return self._mat(cid, course, 'file', f['id'], f.get('display_name') or f.get('filename'), '',
@@ -132,7 +138,7 @@ class CanvasClient:
         def collect(what, route, **params):
             return self._soft(what, f'{self.base}/{prefix}/{what}', lambda: list(self.pages(route, per_page=100, **params))) or []
 
-        for a in collect('assignments', f'{prefix}/assignments'):
+        for a in collect('assignments', f'{prefix}/assignments', **{'include[]': ['submission']}):
             title = a.get('name')
             kind = 'quiz' if 'online_quiz' in (a.get('submission_types') or []) else 'assignment'
             if TEST_WORDS.search(title or '') and kind != 'assignment':
@@ -140,7 +146,7 @@ class CanvasClient:
             body = (a.get('description') or '')
             text = body + (f"\nCanvas due_at: {a.get('due_at')}" if a.get('due_at') else '')
             yield self._mat(cid, name, 'assignment', a['id'], title, text, a.get('html_url'), a.get('updated_at'),
-                            structured=self._structured(kind, title, a.get('due_at'), 'due_at'))
+                            structured=self._structured(kind, title, a.get('due_at'), 'due_at', done=_done(a)))
             yield from self._linked(cid, name, body, a.get('html_url') or '')
 
         for q in collect('quizzes', f'{prefix}/quizzes'):
@@ -168,7 +174,7 @@ class CanvasClient:
                     g = google_export_url(item['external_url'])
                     if g:
                         yield self._mat(cid, name, 'gdoc', g[1], item.get('title'), '', item['external_url'],
-                                        download_url=g[0], filename='linked.txt', external=True)
+                                        download_url=g[0], browser_url=g[0], filename=g[2], external=True)
             yield self._mat(cid, name, 'module', mod['id'], f"Module {mod.get('name')}", '\n'.join(lines),
                             f'{self.base}/courses/{cid}/modules')
 

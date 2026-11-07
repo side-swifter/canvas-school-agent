@@ -25,6 +25,8 @@ class FakeDriver:
     def __init__(self, pages, expired=False): self.pages, self.expired, self.visited = pages, expired, []
     def __enter__(self): return self
     def __exit__(self, *a): pass
+    def open(self): return self
+    def close(self): pass
     def goto(self, url):
         self.visited.append(url)
         if self.expired: raise SessionExpired('https://sso.example/login')

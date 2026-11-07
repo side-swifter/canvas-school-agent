@@ -13,6 +13,7 @@ STOP = {'the', 'a', 'an', 'of', 'and', 'for', 'on', 'in', 'to', 'is', 'will', 'b
 SYN = {'exam': 'test', 'exams': 'test', 'tests': 'test', 'midterm': 'test', 'quizzes': 'quiz', 'hw': 'assignment',
        'homework': 'assignment', 'assignments': 'assignment', 'quizz': 'quiz'}
 MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+ES_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
 
 
 def digest(s):
@@ -68,11 +69,30 @@ def date_supported(d, evidence):
         return True
     if re.search(rf'\b0?{day}(st|nd|rd|th)?\s+(of\s+)?{MONTHS[month-1]}', e):
         return True
+    es = ES_MONTHS[month - 1]
+    if re.search(rf'\b0?{day}\s+de\s+{es}', e) or re.search(rf'\b{es}[a-z]*\.?\s*0?{day}\b', e):
+        return True
     if re.search(rf'\b0?{month}[/\-.]0?{day}\b', e):
         return True
     if re.search(rf'\b{d.year}-0?{month}-0?{day}\b', e):
         return True
     return False
+
+
+CANCEL_RE = re.compile(r'\b(cancel+ed|cancel+ation|called off|no (?:habr[aá]|hay) (?:clase|examen|prueba)|cancelad[oa])\b', re.I)
+CHANGE_RE = re.compile(r'\b(moved|postponed|pushed back|rescheduled|resched\w*|changed to|now (?:on|will|is)|instead of|delayed|cambiad[oa]|pospuest[oa])\b', re.I)
+DUE_RE = re.compile(r'\b(due|deadline|submit\w*|turn(?:ed)? in|hand in|by|before|entrega\w*|vence|until)\b', re.I)
+
+
+def status_guard(kind, status, evidence):
+    """Deterministic second opinion on what a small model reports. Returns a review reason or None."""
+    if CANCEL_RE.search(evidence) and status != 'cancelled':
+        return 'cancellation_wording_but_status_not_cancelled'
+    if CHANGE_RE.search(evidence) and status == 'scheduled':
+        return 'change_wording_but_status_scheduled'
+    if kind in TODO_KINDS and not DUE_RE.search(evidence):
+        return 'assignment_date_not_marked_as_due'
+    return None
 
 
 def normalize(items, material, cfg, today=None):
@@ -124,6 +144,10 @@ def normalize(items, material, cfg, today=None):
             continue
         if not date_supported(when, evidence):
             to_review('date_not_stated_in_evidence')
+            continue
+        guard = status_guard(kind, status, evidence)
+        if guard:
+            to_review(guard)
             continue
         if not (today - timedelta(days=7) <= when <= today + timedelta(days=cfg.lookahead_days)):
             continue

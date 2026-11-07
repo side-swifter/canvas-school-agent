@@ -92,7 +92,7 @@ def _resolve(c, approval):
             if text_dates:
                 notes.append(f'Canvas data says {dates[0]}; other sources mention {", ".join(text_dates)} (Canvas used)')
         pick = max(pool, key=lambda o: (o.get('structured', 0), stamp(o)))
-        return {'date': dates[0], 'time': pick.get('time'), 'status': 'scheduled', 'notes': notes}
+        return {'date': dates[0], 'time': pick.get('time'), 'status': 'completed' if pick['status'] == 'completed' else 'scheduled', 'notes': notes}
     if approval and approval.get('date') in dates:
         pick = [o for o in pool if o['date'] == approval['date']][0]
         return {'date': approval['date'], 'time': pick.get('time'), 'status': 'scheduled', 'notes': notes + ['conflict resolved by user']}

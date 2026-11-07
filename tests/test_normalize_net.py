@@ -91,3 +91,17 @@ def test_no_retry_on_4xx_and_exhaustion():
     assert request_with_retry(s, 'GET', 'http://x', sleep=lambda x: None).status_code == 403 and s.n == 1
     with pytest.raises(RetryExhausted):
         request_with_retry(Flaky([Resp({}, 500)]), 'GET', 'http://x', attempts=3, sleep=lambda x: None)
+
+
+def test_status_guards_catch_small_model_mistakes():
+    M2 = {**M, 'text': 'The quiz on Friday, November 13 is cancelled. Unit 3 Test moved to November 19. Posted on November 2. Essay due November 20.'}
+    ok, rev = normalize([item('quiz', 'Quiz', '2026-11-13', 'quiz on Friday, November 13 is cancelled')], M2, CFG, TODAY)
+    assert not ok and rev[0]['reason'] == 'cancellation_wording_but_status_not_cancelled'
+    ok, rev = normalize([{**item('quiz', 'Quiz', '2026-11-13', 'quiz on Friday, November 13 is cancelled'), 'status': 'cancelled'}], M2, CFG, TODAY)
+    assert len(ok) == 1 and ok[0]['status'] == 'cancelled'
+    ok, rev = normalize([item('test', 'Unit 3 Test', '2026-11-19', 'Unit 3 Test moved to November 19')], M2, CFG, TODAY)
+    assert not ok and rev[0]['reason'] == 'change_wording_but_status_scheduled'
+    ok, rev = normalize([item('assignment', 'Essay', '2026-11-02', 'Posted on November 2')], M2, CFG, TODAY)
+    assert not ok and rev[0]['reason'] == 'assignment_date_not_marked_as_due'
+    ok, rev = normalize([item('assignment', 'Essay', '2026-11-20', 'Essay due November 20')], M2, CFG, TODAY)
+    assert len(ok) == 1
