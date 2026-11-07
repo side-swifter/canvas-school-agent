@@ -403,6 +403,46 @@ def auth_google(cfg):
     return 0
 
 
+def write_env(path, updates):
+    """Update KEY=VALUE lines in place (other lines kept), atomically, mode 600, directory mode 700."""
+    import os
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lines = path.read_text().splitlines() if path.exists() else []
+    done = set()
+    for i, line in enumerate(lines):
+        key = line.split('=', 1)[0].strip()
+        if key in updates and not line.lstrip().startswith('#'):
+            lines[i], done = f'{key}={updates[key]}', done | {key}
+    lines += [f'{k}={v}' for k, v in updates.items() if k not in done]
+    tmp = path.with_name(path.name + '.tmp')
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as fh:
+        fh.write('\n'.join(lines) + '\n')
+    os.replace(tmp, path)
+    os.chmod(path, 0o600)
+
+
+def setup_canvas(cfg, base_url, getpass_fn=None, session=None):
+    """Hidden-input token entry; verifies with read-only GET /users/self; keeps DRY_RUN=true. Never prints the token."""
+    import getpass
+    token = (getpass_fn or getpass.getpass)('Canvas API token (input hidden): ').strip()
+    if not token:
+        print('No token entered; nothing saved.'); return 1
+    base = base_url.rstrip('/')
+    sess = session or requests.Session()
+    try:
+        resp = sess.get(f'{base}/api/v1/users/self', headers={'Authorization': f'Bearer {token}'}, timeout=30)
+    except requests.RequestException as exc:
+        print(f'Could not reach Canvas ({type(exc).__name__}); nothing saved.'); return 1
+    if resp.status_code != 200:
+        print(f'Canvas rejected the token (HTTP {resp.status_code}); nothing saved.'); return 1
+    write_env(Path(cfg.secrets_dir) / 'env', {'CANVAS_BASE_URL': base, 'CANVAS_TOKEN': token, 'DRY_RUN': 'true'})
+    print(f'Authenticated as: {resp.json().get("name", "(name hidden)")}')
+    print(f'Saved to {Path(cfg.secrets_dir) / "env"} (mode 600). DRY_RUN=true; no synchronization enabled.')
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Course document scan and deadline sync')
     sub = parser.add_subparsers(dest='command')
@@ -410,12 +450,15 @@ def main(argv=None):
     rv = sub.add_parser('review')
     rv.add_argument('action', choices=['list', 'show', 'approve', 'reject']); rv.add_argument('id', nargs='?', type=int)
     rv.add_argument('--date')
+    sc2 = sub.add_parser('setup-canvas'); sc2.add_argument('--base-url', default='https://wcpss.instructure.com')
     sub.add_parser('auth-google'); sub.add_parser('approve-live'); sub.add_parser('status')
     args = parser.parse_args(argv)
     cfg = Config.from_env()
     cmd = args.command or 'scan'
     if cmd == 'review':
         return review_cli(cfg, args)
+    if cmd == 'setup-canvas':
+        return setup_canvas(cfg, args.base_url)
     if cmd == 'auth-google':
         return auth_google(cfg)
     if cmd == 'approve-live':
