@@ -18,3 +18,11 @@ You are the implementation agent operating on my Ubuntu server. Your task is to 
 **Non-negotiables:** no secrets in git, no automatic assignment submission or teacher communication, no made-up dates, no duplicate calendar entries, and no unsanctioned browser authentication bypass. Request approval before destructive actions or enabling writes.
 
 **Deliverable:** provide a concise deployment report showing services, schedules, last scan results, sources scanned, new obligations, review queue, errors, and remaining limitations.
+
+---
+## Implementation status (v0.2.0)
+Implemented and unit/integration-tested with fakes: API-first Canvas ingestion, browser fallback, document extraction, configurable
+AI extraction with approval gate, source-grounded validation, cross-source reconciliation, review queue, Todoist/Calendar upsert with
+adoption + user-edit protection, Google OAuth refresh, retry/backoff, alerts, scan lock, idempotence, live-write approval gate.
+Not yet done (needs credentials / owner decisions): live Canvas/Todoist/Google/model verification, browser session capture,
+installing the systemd timer, enabling live writes. See README "Authentication steps".

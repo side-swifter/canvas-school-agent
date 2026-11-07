@@ -8,3 +8,11 @@ state/
 logs/
 *.log
 .DS_Store
+
+# secrets / sessions
+*.key
+google.json
+storage_state*.json
+live_writes_approved
+env
+*.egg-info/
