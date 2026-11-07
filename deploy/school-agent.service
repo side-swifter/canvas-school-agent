@@ -1,0 +1,15 @@
+[Unit]
+Description=Canvas School Agent Scan
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=REPLACE_USER
+WorkingDirectory=REPLACE_REPO_PATH
+EnvironmentFile=REPLACE_REPO_PATH/.env
+ExecStart=REPLACE_REPO_PATH/.venv/bin/school-agent scan
+TimeoutStartSec=20min
+# Restrict privileges; adjust if existing browser integration requires extra capabilities.
+NoNewPrivileges=true
+PrivateTmp=true
