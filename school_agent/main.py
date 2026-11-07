@@ -141,6 +141,10 @@ def enrich(m, cfg, deps, store, now):
             raw = deps.canvas.download(m['download_url'], maxb) if deps.canvas else None
         except (PermissionError, requests.HTTPError, RetryExhausted):
             raw = None
+        except ValueError as exc:
+            if 'too large' in str(exc):
+                return m, 'too_large'
+            raise
         if raw is None and deps.driver and m.get('browser_url'):
             with deps.driver:
                 raw = deps.driver.download(m['browser_url']).body
@@ -156,6 +160,10 @@ def enrich(m, cfg, deps, store, now):
                 m['text'] = extract_document(raw, m.get('filename') or m['title'])
             except NeedsOCR:
                 return m, 'needs_ocr'
+            except ValueError as exc:
+                if 'too large' in str(exc):
+                    return m, 'too_large'
+                raise
             except Exception as exc:
                 log.warning('Unable to extract %s: %s', m['key'], exc)
                 return m, 'unreadable'
@@ -191,7 +199,7 @@ def scan(cfg, deps=None, force=False):
                 if store.add_review(f"unreadable:{m['key']}:{issue}", 'unreadable_document',
                                     {'source': m['key'], 'title': m['title'], 'url': m['url'], 'issue': issue,
                                      'reason': {'needs_ocr': 'image-only PDF; OCR not run automatically', 'inaccessible': 'API and browser could not open it',
-                                                'unreadable': 'could not parse file'}[issue]}, now_iso):
+                                                'unreadable': 'could not parse file', 'too_large': 'exceeds MAX_DOCUMENT_MB'}[issue]}, now_iso):
                     rep['new_reviews'].append(f"unreadable:{m['title']}")
                 continue
             text = (m.get('text') or '').strip()
@@ -316,12 +324,15 @@ def inject_approved(store, now, run_id):
 
 def sync(cfg, deps, rep, store, now_iso):
     cache, dry = {}, cfg.dry_run
+    today_iso = now_iso[:10]
     for ob in store.obligations():
         if ob['held'] or not ob['date'] or ob['desired_fp'] == ob['synced_fp']:
             continue
         target = target_for(ob['kind'])
         if not target:
             continue
+        if ob['date'] < today_iso and not (ob['todoist_id'] or ob['calendar_id']):
+            continue        # never create NEW entries for dates already past
         client = deps.gcal if target == 'calendar' else deps.todoist
         entry = {'oid': ob['oid'], 'target': target, 'course': ob['course'], 'title': ob['title'], 'date': ob['date'],
                  'status': ob['status'], 'sources': ob['urls']}

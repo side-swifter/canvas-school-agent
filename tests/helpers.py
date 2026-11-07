@@ -96,7 +96,7 @@ class FakeCanvas(CanvasClient):
 def physics_routes(extra=None, announcements=None, assignments=None):
     r = {
         'courses': [{'id': 101, 'name': 'AP Physics', 'syllabus_body': '<p>See <a href="%s/courses/101/files/9001">syllabus</a> and the '
-             '<a href="https://docs.google.com/document/d/DOC123/edit">schedule doc</a>.</p>' % BASE}],
+             '<a href="https://docs.google.com/document/d/DOC1234567890ABCDEF/edit">schedule doc</a>.</p>' % BASE}],
         'courses/101/assignments': assignments if assignments is not None else [
             {'id': 1, 'name': 'Lab report 2', 'description': '<p>Write up the pendulum lab.</p>', 'due_at': '2026-11-21T04:59:59Z',
              'html_url': f'{BASE}/courses/101/assignments/1', 'updated_at': '2026-11-01T00:00:00Z', 'submission_types': ['online_upload']}],
@@ -118,7 +118,7 @@ def physics_routes(extra=None, announcements=None, assignments=None):
 def physics_files():
     return {f'{BASE}/files/9001/download?v=1': make_pdf(SYLLABUS_LINES),
             f'{BASE}/files/9002/download?v=1': make_docx(SCHEDULE_ROWS),
-            'https://docs.google.com/document/d/DOC123/export?format=txt': b'Class notes: nothing dated here'}
+            'https://docs.google.com/document/d/DOC1234567890ABCDEF/export?format=txt': b'Class notes: nothing dated here'}
 
 
 class ScriptedAI:

@@ -91,7 +91,7 @@ def extract_document(content, filename):
 
 
 SUPPORTED_EXT = ('.pdf', '.docx', '.txt', '.csv', '.md', '.html', '.htm')
-GOOGLE_DOC_RE = re.compile(r'https://docs\.google\.com/(document|spreadsheets|presentation)/d/([\w-]+)')
+GOOGLE_DOC_RE = re.compile(r'https://docs\.google\.com/(document|spreadsheets|presentation)/d/(?!e/)([\w-]{15,})')
 
 
 def google_export_url(url):

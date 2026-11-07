@@ -97,3 +97,21 @@ def test_review_cli_roundtrip(tmp_path, capsys):
     assert not [r for r in deps.store.reviews('open') if r['id'] == rid]
     scan(cfg, deps, force=True)
     assert not [r for r in deps.store.reviews('open') if r['id'] == rid]       # rejected item does not reappear
+
+
+def test_past_items_not_newly_created_and_published_gdoc_links_ignored(tmp_path):
+    from school_agent.documents import google_export_url
+    assert google_export_url('https://docs.google.com/document/d/e/2PACX-abc/pub') is None
+    assert google_export_url('https://docs.google.com/document/d/1Vc6uTjLkHtniLpGjpMD2-03He8m/edit')
+    cfg = make_cfg(tmp_path)
+    r = physics_routes(assignments=[{'id': 1, 'name': 'Old essay', 'description': '', 'due_at': '2026-11-04T04:59:59Z', 'html_url': 'u', 'submission_types': []}])
+    deps = make_deps(cfg, FakeCanvas(r, physics_files()), ScriptedAI(DEFAULT_AI), FakeTodoist(), FakeCalendar())
+    scan(cfg, deps)
+    assert not any(a['title'] == 'Old essay' for a in json.loads(Path(cfg.state_dir, 'last-report.json').read_text())['actions'])
+
+
+def test_too_large_document_is_review_item_not_error(tmp_path):
+    cfg = make_cfg(tmp_path)
+    canvas = FakeCanvas(physics_routes(), {**physics_files(), f'{BASE}/files/9001/download?v=1': ValueError('Document too large')})
+    deps = make_deps(cfg, canvas, ScriptedAI(DEFAULT_AI), FakeTodoist(), FakeCalendar())
+    assert scan(cfg, deps) == 0
