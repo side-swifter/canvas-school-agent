@@ -1,0 +1,12 @@
+[Unit]
+Description=Scheduled course scans (Eastern time)
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 America/New_York
+OnCalendar=*-*-* 12:00:00 America/New_York
+OnCalendar=*-*-* 14..22:00:00 America/New_York
+Persistent=true
+Unit=school-agent.service
+
+[Install]
+WantedBy=timers.target
